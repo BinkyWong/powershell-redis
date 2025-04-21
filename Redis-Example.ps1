@@ -1,5 +1,3 @@
-Import-Module "$PSScriptRoot\RedisSimple.psm1"
-
 $redisHost = "192.168.0.25"
 $redisPort = 6379
 $totalJobs = 130000
