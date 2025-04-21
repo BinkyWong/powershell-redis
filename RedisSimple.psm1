@@ -10,7 +10,7 @@ function Send-RedisCommand {
     $stream = $client.GetStream()
     $cmdBytes = [System.Text.Encoding]::ASCII.GetBytes($Command)
     $stream.Write($cmdBytes, 0, $cmdBytes.Length)
-    Start-Sleep -Milliseconds 100
+    # Start-Sleep -Milliseconds 100
     $buffer = New-Object byte[] 4096
     $bytesRead = $stream.Read($buffer, 0, 4096)
     $response = [System.Text.Encoding]::ASCII.GetString($buffer, 0, $bytesRead)

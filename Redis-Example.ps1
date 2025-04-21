@@ -1,57 +1,34 @@
 Import-Module "$PSScriptRoot\RedisSimple.psm1"
 
-# Change this to your Redis server's IP address and port
 $redisHost = "192.168.0.25"
 $redisPort = 6379
+$totalJobs = 1000
 
 $scriptStart = Get-Date
 
-Write-Host "Testing Redis connection with PING command..." -ForegroundColor Cyan
-$response = Invoke-RedisPing -Host $redisHost -Port $redisPort
-Write-Host "PING response: $response" -ForegroundColor Green
+# Open one connection
+$client = New-Object System.Net.Sockets.TcpClient($redisHost, $redisPort)
+$stream = $client.GetStream()
 
-$modulePath = "$PSScriptRoot\RedisSimple.psm1"
-$jobs = @()
-$totalJobs = 50
-
-Write-Host "`nInserting"$totalJobs" random key-value pairs using multithreading..." -ForegroundColor Cyan
-
+# Build all commands in one string (pipeline)
+$allCmds = ""
 for ($i = 1; $i -le $totalJobs; $i++) {
-    $jobs += Start-Job -ScriptBlock {
-        param ($redisHost, $redisPort, $index, $modulePath)
-        Import-Module $modulePath
-        $key = "key_" + ([guid]::NewGuid().ToString().Substring(0, 5))
-        $value = "value_" + ([guid]::NewGuid().ToString().Substring(0, 8))
-        $response = Set-RedisKeyValue -Host $redisHost -Port $redisPort -Key $key -Value $value
-        if ($response -match "OK") {
-            Write-Output "[$index/$using:totalJobs] Success: $key = $value"
-        }
-        else {
-            Write-Output "[$index/$using:totalJobs] Failed: $key = $value, Response: $response"
-        }
-    } -ArgumentList $redisHost, $redisPort, $i, $modulePath
+    $key = "key_" + ([guid]::NewGuid().ToString().Substring(0, 5))
+    $value = "value_" + ([guid]::NewGuid().ToString().Substring(0, 8))
+    $allCmds += "*3`r`n`$3`r`nSET`r`n`$" + $key.Length + "`r`n$key`r`n`$" + $value.Length + "`r`n$value`r`n"
 }
 
-# Progress bar setup
-$completed = 0
-while ($completed -lt $totalJobs) {
-    $finished = ($jobs | Where-Object { $_.State -eq 'Completed' }).Count
-    $percent = [math]::Round(($finished / $totalJobs) * 100)
-    Write-Progress -Activity "Inserting keys into Redis" -Status "$percent% Complete" -PercentComplete $percent
-    Start-Sleep -Milliseconds 200
-    $completed = $finished
-}
+# Send all at once
+$cmdBytes = [System.Text.Encoding]::ASCII.GetBytes($allCmds)
+$stream.Write($cmdBytes, 0, $cmdBytes.Length)
 
-# Wait for all jobs to complete and output their results
-$jobs | ForEach-Object {
-    $jobResult = Receive-Job -Job $_ -Wait
-    Write-Host $jobResult -ForegroundColor Green
-    Remove-Job -Job $_
-}
+# Read all responses (one per SET)
+$buffer = New-Object byte[] ($totalJobs * 16)
+$bytesRead = $stream.Read($buffer, 0, $buffer.Length)
+$response = [System.Text.Encoding]::ASCII.GetString($buffer, 0, $bytesRead)
 
-Write-Host "`nVerifying with KEYS command..." -ForegroundColor Cyan
-$response = Get-RedisKeys -Host $redisHost -Port $redisPort -Pattern "key_*"
-Write-Host "Keys found: $response" -ForegroundColor Green
+$stream.Close()
+$client.Close()
 
 $scriptEnd = Get-Date
 $duration = $scriptEnd - $scriptStart
